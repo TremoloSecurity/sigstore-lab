@@ -1,0 +1,16 @@
+---
+apiVersion: openunison.tremolo.io/v1
+kind: Target
+metadata:
+  name: argocd
+  namespace: {{ .Release.Namespace }}
+spec:
+  className: com.tremolosecurity.argocd.targets.ArgoCDTarget
+  params:
+  - name: url
+    value: "https://argocd.{{ .Values.sigstore_lab.domain }}"
+  secretParams:
+  - name: token
+    secretName: argocd-token
+    secretKey: ARGOCD_TOKEN
+  targetAttributes: []

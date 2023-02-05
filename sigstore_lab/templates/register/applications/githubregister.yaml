@@ -1,0 +1,97 @@
+---
+apiVersion: openunison.tremolo.io/v1
+kind: Application
+metadata:
+  name: githubregister
+  namespace: {{ .Release.Namespace }}
+spec:
+  azTimeoutMillis: 3000
+  isApp: true
+  urls:
+  - hosts:
+    - "#[OU_HOST]"
+    filterChain: 
+    - className: com.tremolosecurity.proxy.filters.XForward
+      params:
+        createHeaders: "false"
+    - className: com.tremolosecurity.proxy.filters.SetNoCacheHeaders
+      params: {}
+    - className: com.tremolosecurity.proxy.filters.MapUriRoot
+      params:
+        newRoot: /register
+        paramName: registerURI
+    uri: "/github-register"
+    proxyTo: http://ouhtml-orchestra-login-portal.openunison.svc:8080${registerURI}
+    authChain: github-register
+    overrideHost: true
+    overrideReferer: true
+    azRules:
+    - scope: filter
+      constraint: (objectClass=*)
+    results: 
+      azFail: default-login-failure
+      auFail: default-login-failure
+  - hosts:
+    - "#[OU_HOST]"
+    filterChain:
+    - className: com.tremolosecurity.scalejs.register.ws.ScaleRegister
+      params:
+        displayNameAttribute: "uid"
+        frontPage.title: "Register for Access to the sigstore lab"
+        frontPage.text: "This form can be used to request access to the sigstore lab."
+        submitButtonText: "Request Access"
+        submittedText: "Thank you for participating in this lab!  Please logout of OpenUnison.  You will receive an email asking you to accept an invitation to the lab's GitHub organization"
+        uidAttributeName: uid
+        workflowName: "github-register"
+        logoutURL: "/logout"
+        homeURL: "/"
+        preSetPassword: "false"
+        requireReason: "true"
+        requireReCaptcha: "false"
+        rcSiteKey: ""
+        rcSecret: ""
+        requireTermsAndConditions: "true"
+        reasonIsList: "true"
+        reasons:
+        - "All I want to do, is have some fun!"
+        - "THIS IS SERIOUS BUSINESS!"
+        termsAndConditionsText: "<ul><li><b>I Solemnly Swear That I Am Up To No Good</b></li><li><b>I will respect my neighbors and co-participants</b></li></ul>"
+        useCallWorkflowClass: "false"
+        callWorkflowClassName: ""
+        submitLoggedInUser: "true"
+        enableThirdColumn: "false"
+
+        attributeNames:
+        - displayName
+
+        displayName.displayName: "Display Name"
+        displayName.readOnly: "false"
+        displayName.required: "true"
+        displayName.regEx: ".*"
+        displayName.regExFailedMsg: "Who are you?"
+        displayName.minChars: "1"
+        displayName.maxChars: "100"
+        displayName.unique: "false"
+        displayName.type: "text"
+
+        
+
+
+    uri: /github-register/register
+    azRules:
+    - scope: filter
+      constraint: (objectClass=*)
+    authChain: github-register
+    results:
+      azFail: default-login-failure
+      auFail: default-login-failure
+  cookieConfig:
+    sessionCookieName: registerosession
+    domain: "#[OU_HOST]"
+    secure: true
+    httpOnly: true
+    logoutURI: "/logout"
+    keyAlias: session-unison
+    timeout: 900
+    scope: -1
+    cookiesEnabled: true

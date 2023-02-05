@@ -1,0 +1,43 @@
+---
+apiVersion: openunison.tremolo.io/v1
+kind: Workflow
+metadata:
+  name: github-register
+  namespace: {{ .Release.Namespace }}
+spec:
+  description: register for sigstore lab
+  inList: false
+  label: register for sigstore lab
+  orgId: none
+  dynamicConfiguration:
+    dynamic: false
+    className: ""
+    params: []
+  tasks: |-
+    - taskType: approval
+      emailTemplate: Request to join the lab
+      mailAttr: mail
+      failureEmailSubject: Lab request failed
+      failureEmailMsg: |-
+        Because:
+        ${reason}
+      label: Request to join the demo
+      approvers:
+      - scope: group
+        constraint: cn=administrators-internal,ou=groups,ou=shadow,o=Tremolo
+      - scope: group
+        constraint: cn=administrators-external,ou=groups,ou=shadow,o=Tremolo
+      onSuccess:
+      - taskType: customTask
+        className: com.tremolosecurity.provisioning.customTasks.ClearGroups
+        params: {}
+      - taskType: addGroup
+        name: {{ .Values.sigstore_lab.group }}
+      - taskType: provision
+        sync: false
+        target: github
+        setPassword: false
+        onlyPassedInAttributes: false
+        attributes:
+        - uid
+      

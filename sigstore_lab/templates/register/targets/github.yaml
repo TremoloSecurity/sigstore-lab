@@ -1,0 +1,20 @@
+apiVersion: openunison.tremolo.io/v1
+kind: Target
+metadata:
+  name: github
+  namespace: {{ .Release.Namespace }}
+spec:
+  className: com.tremolosecurity.provisioning.core.providers.GitHubProvider
+  params:
+  - name: appid
+    value: "{{ .Values.sigstore_lab.github.appid }}"
+  - name: org
+    value: "{{ .Values.sigstore_lab.github.org }}"
+  secretParams:
+  - name: githubAppKey
+    secretName: githubapp
+    secretKey: github.pem
+  targetAttributes:
+  - name: sub
+    source: sub
+    sourceType: user

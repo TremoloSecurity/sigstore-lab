@@ -1,0 +1,13 @@
+---
+apiVersion: openunison.tremolo.io/v1
+kind: AuthenticationMechanism
+metadata:
+  name: splash-page
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: openunison
+spec:
+  className: com.tremolosecurity.proxy.auth.SplashPageAuth
+  uri: "/auth/splash"
+  init: {}
+  secretParams: []

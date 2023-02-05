@@ -1,0 +1,586 @@
+---
+apiVersion: openunison.tremolo.io/v1
+kind: Workflow
+metadata:
+  name: jit-workshop
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: openunison
+    app.kubernetes.io/instance: openunison-orchestra
+    app.kubernetes.io/component: openunison-workflows
+    app.kubernetes.io/part-of: openunison
+spec:
+  description: JIT - Generate User Namespace
+  inList: false
+  label: JIT - Generate User Namespace
+  orgId: 687da09f-8ec1-48ac-b035-f2f182b9bd1e
+  dynamicConfiguration:
+    dynamic: false
+    className: ""
+    params: []
+  tasks: |-
+      # Map the user's uid to something that can be used
+      # as a namespace
+      - taskType: customTask
+        className: com.tremolosecurity.provisioning.customTasks.JavaScriptTask
+        params:
+          javaScript: |-
+            // Maps external groups to local groups
+            System = Java.type("java.lang.System");
+            DN = Java.type("com.novell.ldap.util.DN");
+            Attribute = Java.type("com.tremolosecurity.saml.Attribute");
+            SetupGroupMetadataWatch = Java.type("com.tremolosecurity.proxy.filters.SetupGroupMetadataWatch");
+            HashMap = Java.type("java.util.HashMap");
+
+            function init(task,params) {
+              // nothing to do
+            }
+
+            function reInit(task) {
+              // do nothing
+            }
+
+            function doTask(user,request) {
+               
+            
+               uid = user.getAttribs().get("uid").getValues().get(0);
+               
+               var namespaceName = "";
+
+               for (var i=0;i<uid.length;i++) {
+                 var c = uid.charAt(i);
+                 if ( ((c >= 'a') && (c <= 'z')) || ((c >= 'A') && (c <= 'Z')) || ((c >= '0') && (c <= '9')) ) {
+                   namespaceName = namespaceName + c;
+                 } else if (c == '-') {
+                   if (i == 0 || i == (uid.length - 1)) {
+                     namespaceName = namespaceName + 'x-' + c.charCodeAt(0) + '-x';
+                   } else {
+                     namespaceName = namespaceName + c;
+                   }
+                 } else {
+                   namespaceName = namespaceName + 'x-' + c.charCodeAt(0) + '-x';
+                 }
+               }
+
+               namespaceName = "user-ns-" + namespaceName.toLowerCase();
+               
+               request.put("namespaceName",namespaceName);
+               request.put("github_user",uid);
+
+               return true;
+            }
+
+      # create the group that will have admin access to the new namespace
+      - taskType: customTask
+        className: com.tremolosecurity.provisioning.customTasks.AddGroupToStore
+        params:
+          target: jitdb
+          name: k8s-namespace-administrators-k8s-k8s-$namespaceName$
+          attributes:
+          - unison.group.create.sql=INSERT INTO localGroups (name,description) VALUES (?,?)
+          - unison.group.create.param.2=View kubernetes namespace $namespaceName$
+          
+      # add the admin group to the logged in user
+      - taskType: addGroup
+        name: k8s-namespace-administrators-k8s-k8s-$namespaceName$
+      
+      # provision the new group to the user
+      - taskType: provision
+        sync: false
+        target: jitdb
+        setPassword: false
+        onlyPassedInAttributes: true
+        attributes:
+        - sub
+      # Create the namespace, this is an idempotent operation
+      - taskType: customTask
+        className: com.tremolosecurity.provisioning.tasks.CreateK8sObject
+        params:
+          targetName: k8s
+          template: |-
+            kind: Namespace
+            apiVersion: v1
+            metadata:
+              name: "$namespaceName$"
+              labels:
+                name: "$namespaceName$"
+                policy.sigstore.dev/include: "true"
+          kind: Namespace
+          url: /api/v1/namespaces
+          srcType: yaml
+      # create the RoleBinding, this is an idempotent operation
+      - taskType: customTask
+        className: com.tremolosecurity.provisioning.tasks.CreateK8sObject
+        params:
+          targetName: k8s
+          template: |-
+            kind: RoleBinding
+            apiVersion: rbac.authorization.k8s.io/v1
+            metadata:
+              name: admins-binding
+              namespace: "$namespaceName$"
+            subjects:
+            - kind: Group
+              name: k8s-namespace-administrators-k8s-k8s-$namespaceName$
+              apiGroup: rbac.authorization.k8s.io
+            - kind: ServiceAccount
+              name: default
+              namespace: "$namespaceName$"
+            roleRef:
+              kind: ClusterRole
+              name: admin
+              apiGroup: rbac.authorization.k8s.io
+          kind: RoleBinding
+          url: /apis/rbac.authorization.k8s.io/v1/namespaces/$namespaceName$/rolebindings
+          srcType: yaml
+      
+      # refresh the user's internal authenticated object
+      - taskType: resync
+        keepExternalAttrs: false
+        changeRoot: true
+        newRoot: o=Tremolo
+
+      # create github team
+      - taskType: customTask
+        className: com.tremolosecurity.provisioning.customTasks.AddGroupToStore
+        params:
+          target: github
+          name: admin-$github_user$-workshop
+          attributes: []
+
+      - taskType: mapping
+        strict: true
+        map:
+          - targetAttributeName: sub
+            sourceType: user
+            targetAttributeSource: uid
+        onSuccess:
+        - taskType: customTask
+          className: com.tremolosecurity.provisioning.customTasks.ClearGroups
+          params: {}
+          
+        - taskType: addGroup
+          name: admin-$github_user$-workshop
+          remove: false
+
+        - taskType: provision
+          sync: false
+          target: github
+          setPassword: false
+          onlyPassedInAttributes: true
+          attributes:
+          - sub
+      
+      - taskType: customTask
+        className: com.tremolosecurity.provisioning.customTasks.github.CreateGithubRepo
+        params:
+          targetName: github
+          name: $github_user$-workshop-application
+          description: project for supplychain workshop
+          team: admin-$github_user$-workshop
+
+      - taskType: customTask
+        className: com.tremolosecurity.provisioning.customTasks.github.AddTeamToRepo
+        params:
+          targetName: github
+          teamName: admin-$github_user$-workshop
+          repoName: $github_user$-workshop-application
+          permission: admin
+
+      - taskType: customTask
+        className: com.tremolosecurity.provisioning.customTasks.github.CreateGitFile
+        params:
+          targetName: github
+          repository: $github_user$-workshop-application
+          branch: main
+          commitMessage: initial create
+          path: source/Dockerfile
+          content: |-
+            FROM python:buster
+
+            RUN groupadd -r microsvc -g 433 && \
+                mkdir /usr/local/microsvc && \
+                useradd -u 431 -r -g microsvc -d /usr/local/microsvc -s /sbin/nologin -c "Micro Service User" microsvc
+
+            ADD requirements.txt /usr/local/microsvc/requirements.txt
+            ADD helloworld.py /usr/local/microsvc/helloworld.py
+
+            WORKDIR /usr/local/microsvc
+
+
+            RUN pip3 install -r ./requirements.txt
+
+            USER 431
+
+            CMD ["python3","helloworld.py"]
+
+      - taskType: customTask
+        className: com.tremolosecurity.provisioning.customTasks.github.CreateGitFile
+        params:
+          targetName: github
+          repository: $github_user$-workshop-application
+          branch: main
+          commitMessage: initial create
+          path: source/helloworld.py
+          content: |-
+            from flask import Flask
+            import os
+            import socket
+            import json
+
+            app = Flask(__name__)
+
+            @app.route('/')
+            def hello():
+                retVal = {
+                    "msg":"hello world!",
+                    "host":"%s" % socket.gethostname()
+
+                }
+                return json.dumps(retVal)
+
+            if __name__ == "__main__":
+                app.run(host="0.0.0.0", port=8080, debug=True)
+
+      - taskType: customTask
+        className: com.tremolosecurity.provisioning.customTasks.github.CreateGitFile
+        params:
+          targetName: github
+          repository: $github_user$-workshop-application
+          branch: main
+          commitMessage: initial create
+          path: source/requirements.txt
+          content: |-
+            flask
+
+      - taskType: customTask
+        className: com.tremolosecurity.provisioning.customTasks.JavaScriptTask
+        params:
+          javaScript: |-
+            
+            function init(task,params) {
+              // nothing to do
+            }
+
+            function reInit(task) {
+              // do nothing
+            }
+
+            function doTask(user,request) {
+              request.put("AWS_ROLE","${{ "{{" }} secrets.AWS_ROLE {{ "}}" }}");
+              request.put("SESSION_NAME","${{ "{{" }} secrets.SESSION_NAME {{ "}}" }}");
+              request.put("DEPLOY_KEY_X","${{ "{{" }} secrets.DEPLOY_KEY {{ "}}" }}");
+              request.put("PATCH",'{\\"spec\\":{\\"template\\":{\\"spec\\":{\\"containers\\":[{\\"name\\":\\"pause\\",\\"image\\":\\"{{ .Values.sigstore_lab.pause_image }}:${GITHUB_REPOSITORY#*/}-$GITHUB_SHA\\"}]}}}}');
+              request.put("DOCKER_REPO",'{{ .Values.sigstore_lab.aws.ecr_repo }}:${GITHUB_REPOSITORY#*/}-$GITHUB_SHA');
+              return true;
+            }
+
+      - taskType: customTask
+        className: com.tremolosecurity.provisioning.customTasks.github.CreateGitFile
+        params:
+          targetName: github
+          repository: $github_user$-workshop-application
+          branch: main
+          commitMessage: initial create
+          path: .github/workflows/build_and_deploy.yaml
+          content: |-
+            name: Build and deploy container
+            on:
+              push:
+                branches: [ "main" ]
+            permissions:
+              id-token: write
+              contents: read    
+            jobs:
+              build:
+                runs-on: ubuntu-20.04
+                steps:
+                  # Setup the build environment
+                  - uses: actions/checkout@v2
+
+                  - uses: actions/setup-go@v2
+
+                  - name: Set up QEMU
+                    uses: docker/setup-qemu-action@v1
+
+                  - name: Set up Docker Buildx
+                    uses: docker/setup-buildx-action@v1
+
+                  - name: Install Cosign
+                    uses: sigstore/cosign-installer@main
+
+                  # Build our container
+                  - run: docker build --tag=$DOCKER_REPO$ ./source
+                  
+                  # Login to AWS
+                  #- uses: aws-actions/configure-aws-credentials@v1
+                  #  with:
+                  #    role-to-assume: $AWS_ROLE$
+                  #    role-session-name: $SESSION_NAME$
+                  #    aws-region: us-east-1
+                  
+                  # Get docker credentials
+                  #- name: Login to Amazon ECR Private
+                  #  id: login-ecr
+                  #  uses: aws-actions/amazon-ecr-login@v1
+                  #  with: 
+                  #    registry-type: public
+                  
+
+                  
+                  # Push to our registry
+                  - run: docker push $DOCKER_REPO$
+
+                  # Sign our image using the GitHub OIDC Token
+                  #- name: Sign image with GitHub OIDC
+                  #  run: |-
+                  #     COSIGN_EXPERIMENTAL=1 cosign sign $DOCKER_REPO$
+
+                  # Check out our application's infrastructure repository
+                  - uses: actions/checkout@v3
+                    with:
+                      repository: {{ .Values.sigstore_lab.github.org }}/$github_user$-workshop-infrastructure
+                      ssh-key: $DEPLOY_KEY_X$
+                      fetch-depth: 0
+                      
+                  # Patch the Deployment with the new image
+                  - run: |-
+                                git pull
+                                git config user.name github-actions
+                                git config user.email github-actions@github.com
+                                
+                                kubectl patch --local -f yaml/deployments/run-service.yaml -p "$PATCH$" -o yaml > /tmp/hello-python.yaml
+                                cp /tmp/hello-python.yaml yaml/deployments/run-service.yaml
+                                git add yaml/deployments/run-service.yaml
+                                git commit -m "commit automated build from commit \$GITHUB_SHA"
+                                git push
+
+      - taskType: customTask
+        className: com.tremolosecurity.provisioning.customTasks.github.CreateGithubRepo
+        params:
+          targetName: github
+          name: $github_user$-workshop-infrastructure
+          description: project for supplychain workshop
+          team: admin-$github_user$-workshop
+
+      - taskType: customTask
+        className: com.tremolosecurity.provisioning.customTasks.github.AddTeamToRepo
+        params:
+          targetName: github
+          teamName: admin-$github_user$-workshop
+          repoName: $github_user$-workshop-infrastructure
+          permission: admin
+
+      - taskType: customTask
+        className: com.tremolosecurity.provisioning.customTasks.github.CreateGitFile
+        params:
+          targetName: github
+          repository: $github_user$-workshop-infrastructure
+          branch: main
+          commitMessage: Setup ns scratchpad
+          path: yaml/deployments/scratchpad.yaml
+          content: |-
+              ---
+              kind: Deployment
+              apiVersion: apps/v1
+              metadata:
+                name: scrathpad
+                namespace: "$namespaceName$"
+                labels:
+                  app: scrathpad
+              spec:
+                replicas: 1
+                selector:
+                  matchLabels:
+                    app: scrathpad
+                template:
+                  metadata:
+                    creationTimestamp: null
+                    labels:
+                      app: scrathpad
+                  spec:
+                    containers:
+                      - name: scratchpad
+                        image: {{ .Values.sigstore_lab.scratchpad_image }}
+                        resources: {}
+                        terminationMessagePath: /dev/termination-log
+                        terminationMessagePolicy: File
+                        imagePullPolicy: IfNotPresent
+                    restartPolicy: Always
+                    terminationGracePeriodSeconds: 30
+                    dnsPolicy: ClusterFirst
+                    securityContext: {}
+                    schedulerName: default-scheduler
+                strategy:
+                  type: RollingUpdate
+                  rollingUpdate:
+                    maxUnavailable: 25%
+                    maxSurge: 25%
+                revisionHistoryLimit: 10
+                progressDeadlineSeconds: 600
+              
+
+      - taskType: customTask
+        className: com.tremolosecurity.provisioning.customTasks.github.CreateGitFile
+        params:
+          targetName: github
+          repository: $github_user$-workshop-infrastructure
+          branch: main
+          commitMessage: Setup ns deployment
+          path: yaml/deployments/run-service.yaml
+          content: |-
+            ---
+            metadata:
+              name: "run-service"
+              namespace: "$namespaceName$"
+              labels:
+                app: "run-service"
+            apiVersion: "apps/v1"
+            kind: "Deployment"
+            spec:
+              template:
+                metadata:
+                  creationTimestamp: null
+                  labels:
+                    app: "run-service"
+                spec:
+                  dnsPolicy: "ClusterFirst"
+                  terminationGracePeriodSeconds: 30
+                  containers:
+                  - image: "{{ .Values.sigstore_lab.pause_image }}"
+                    imagePullPolicy: "Always"
+                    terminationMessagePolicy: "File"
+                    terminationMessagePath: "/dev/termination-log"
+                    name: "pause"
+                    resources: {}
+                  securityContext: {}
+                  restartPolicy: "Always"
+                  schedulerName: "default-scheduler"
+              replicas: 1
+              selector:
+                matchLabels:
+                  app: "run-service"
+              revisionHistoryLimit: 10
+              strategy:
+                type: "RollingUpdate"
+                rollingUpdate:
+                  maxSurge: "25%"
+                  maxUnavailable: "25%"
+              progressDeadlineSeconds: 600
+      
+      - taskType: ifAttrHasValue
+        name: $github_user$-workshop-infrastructure-key-created
+        value: "true"
+        onSuccess:
+        - taskType: customTask
+          className: com.tremolosecurity.provisioning.customTasks.github.CreateSecret
+          params:
+            targetName: github
+            repoName: $github_user$-workshop-application
+            name: AWS_ROLE
+            value: "{{ .Values.sigstore_lab.aws.role }}"
+
+        - taskType: customTask
+          className: com.tremolosecurity.provisioning.customTasks.github.CreateSecret
+          params:
+            targetName: github
+            repoName: $github_user$-workshop-application
+            name: SESSION_NAME
+            value: "build-$sub$"
+            
+        - taskType: customTask
+          className: com.tremolosecurity.provisioning.customTasks.github.CreateDeploymentKey
+          params:
+            targetName: github
+            repo: $github_user$-workshop-infrastructure
+            keyLabel: infrastructure-update
+            makeWriteable: "true"
+            privateKeyReuestName: "infraSshKeyB64"
+            privateKeyReuestNamePT: "infraSshKey"
+
+        - taskType: customTask
+          className: com.tremolosecurity.provisioning.customTasks.github.CreateSecret
+          params:
+            targetName: github
+            repoName: $github_user$-workshop-application
+            name: DEPLOY_KEY
+            value: "$gitPrivateKey$"
+
+
+        # create a git repo in argocd that is connected to our operations project in gitlab
+        - taskType: customTask
+          className: com.tremolosecurity.argocd.tasks.CreateGitRepository
+          params:
+            type: git
+            name: $namespaceName$
+            repoUrl: "$gitSshUrl$"
+            sshPrivateKey: $gitPrivateKey$
+            target: argocd 
+        
+        # create argocd project
+        - taskType: customTask
+          className: com.tremolosecurity.provisioning.tasks.CreateK8sObject
+          params:
+            targetName: k8s
+            kind: AppProject
+            srcType: yaml
+            url: /apis/argoproj.io/v1alpha1/namespaces/argocd/appprojects
+            template: |-
+              apiVersion: argoproj.io/v1alpha1
+              kind: AppProject
+              metadata:
+                name: $namespaceName$
+                namespace: argocd
+              spec:
+                description: Project for $namespaceName$
+                destinations:
+                  - namespace: $namespaceName$
+                    server: https://kubernetes.default.svc
+                sourceRepos:
+                  - $gitSshUrl$
+                  
+        # create applications
+        - taskType: customTask
+          className: com.tremolosecurity.provisioning.tasks.CreateK8sObject
+          params:
+            targetName: k8s
+            kind: Application
+            srcType: yaml
+            url: /apis/argoproj.io/v1alpha1/namespaces/argocd/applications
+            template: |-
+              apiVersion: argoproj.io/v1alpha1
+              kind: Application
+              metadata:
+                name: $namespaceName$
+                namespace: argocd
+              spec:
+                destination:
+                  namespace: $namespaceName$
+                  server: https://kubernetes.default.svc
+                project: $namespaceName$
+                source:
+                  directory:
+                    jsonnet: {}
+                    recurse: true
+                  path: yaml
+                  repoURL: $gitSshUrl$
+                  targetRevision: HEAD
+                syncPolicy:
+                  automated: {}
+
+        # create applications
+        - taskType: customTask
+          className: com.tremolosecurity.argocd.tasks.AddtoRBAC
+          params:
+            k8sTarget: k8s
+            toAdd: |-
+              p, role:k8s-namespace-administrators-k8s-$namespaceName$, applications, get, $namespaceName$/*, allow
+              p, role:k8s-namespace-administrators-k8s-$namespaceName$, applications, override, $namespaceName$/*, allow
+              p, role:k8s-namespace-administrators-k8s-$namespaceName$, applications, sync, $namespaceName$/*, allow
+              p, role:k8s-namespace-administrators-k8s-$namespaceName$, applications, update, $namespaceName$/*, allow
+              
+              p, role:k8s-namespace-administrators-k8s-$namespaceName$, projects, get, $namespaceName$, allow
+              
+              g, k8s-namespace-administrators-k8s-k8s-$namespaceName$, role:k8s-namespace-administrators-k8s-$namespaceName$
+              
+      

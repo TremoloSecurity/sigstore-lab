@@ -1,0 +1,13 @@
+apiVersion: openunison.tremolo.io/v1
+kind: PortalUrl
+metadata:
+  name: a0-github
+  namespace: openunison
+spec:
+  label: GitHub
+  org: B158BD40-0C1B-11E3-8FFD-0800200C9A66
+  url: https://github.com/orgs/{{ .Values.sigstore_lab.github.org }}/repositories
+  icon: {{ .Values.sigstore_lab.icon }}
+  azRules:
+  - constraint: o=Tremolo
+    scope: dn

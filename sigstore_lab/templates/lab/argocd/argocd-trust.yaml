@@ -1,0 +1,18 @@
+apiVersion: openunison.tremolo.io/v1
+kind: Trust
+metadata:
+  name: argocd
+  namespace: {{ .Release.Namespace }}
+spec:
+  accessTokenSkewMillis: 120000
+  accessTokenTimeToLive: 1200000
+  authChainName: login-service
+  clientId: argocd
+  codeLastMileKeyName: lastmile-oidc
+  codeTokenSkewMilis: 60000
+  publicEndpoint: true
+  redirectURI:
+  - https://argocd.{{ .Values.sigstore_lab.domain }}/auth/callback
+  - http://localhost:8085/auth/callback
+  signedUserInfo: true
+  verifyRedirect: true

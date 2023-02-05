@@ -1,0 +1,15 @@
+---
+apiVersion: openunison.tremolo.io/v1
+kind: AuthenticationChain
+metadata:
+  name: splashpage
+  namespace: {{ .Release.Namespace }}
+spec:
+  level: 20
+  root: o=Data
+  authMechs:
+  - name: splash-page
+    required: required
+    params:
+      splashUri: "/auth/forms/login-splash.jsp"
+    secretParams: []
