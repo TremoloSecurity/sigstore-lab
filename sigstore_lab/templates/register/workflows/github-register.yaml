@@ -31,6 +31,7 @@ spec:
       - taskType: customTask
         className: com.tremolosecurity.provisioning.customTasks.ClearGroups
         params: {}
+      {{ if eq .Values.gittype "github" }}
       - taskType: addGroup
         name: {{ .Values.sigstore_lab.group }}
       - taskType: provision
@@ -40,4 +41,23 @@ spec:
         onlyPassedInAttributes: false
         attributes:
         - uid
+      {{ end }}
+      - taskType: customTask
+        className: com.tremolosecurity.provisioning.customTasks.ClearGroups
+        params: {}
+      - taskType: callWorkflow
+        name: jitdb
+      - taskType: callWorkflow
+        name: jit-workshop
+      - taskType: customTask
+        className: com.tremolosecurity.provisioning.customTasks.LoadAttributes
+        params:
+          nameAttr: uid
+          name: 
+          - mail
+      - taskType: notifyUser
+        subject: You SigStore Lab is ready!
+        msg: Make sure you have accepted the GitHub invitation first, then go to https://#[OU_HOST]/
+        mailAttrib: mail
+      
       

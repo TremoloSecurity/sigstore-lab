@@ -11,6 +11,23 @@ spec:
   - hosts:
     - "#[OU_HOST]"
     filterChain: 
+    - className: com.tremolosecurity.prelude.filters.LoginTest
+      params:
+        logoutURI: "/logout"
+    
+    uri: "/github-login"
+    authChain: github-register
+    overrideHost: true
+    overrideReferer: true
+    azRules:
+    - scope: filter
+      constraint: (objectClass=*)
+    results: 
+      azFail: default-login-failure
+      auFail: default-login-failure
+  - hosts:
+    - "#[OU_HOST]"
+    filterChain: 
     - className: com.tremolosecurity.proxy.filters.XForward
       params:
         createHeaders: "false"

@@ -5,6 +5,7 @@ metadata:
   namespace: {{ .Release.Namespace }}
 spec:
   authMechs:
+  {{ if eq .Values.gittype "github" }}
   - name: github
     params:
       bearerTokenName: githubToken
@@ -28,11 +29,68 @@ spec:
     params:
       map:
       - uid|user|login
-      - mail|static|na
+      - mail|composite|${mail}
       - givenName|static|na
       - sn|static|na
       - displayName|static|na
       - memberOf|user|groups
     required: required
+  {{ else if eq .Values.gittype "gitlab" }}
+  - name: oidc
+    required: required
+    params:
+      bearerTokenName: oidcBearerToken
+      {{ if not .Values.oidc.client_id_is_secret  }}
+      clientid: {{ .Values.oidc.client_id | quote }}
+      {{ end }}
+      {{ if .Values.oidc.issuer }}
+      issuer: {{ .Values.oidc.issuer | quote }}
+      {{ else }}
+      idpURL: {{ .Values.oidc.auth_url | default "" | quote }}
+      loadTokenURL: {{ .Values.oidc.token_url | default "" | quote }}
+      restURL: {{ .Values.oidc.userinfo_url | default "" | quote }}
+      {{ end }}
+      responseType: code
+      
+      
+      scope: {{ .Values.oidc.scopes | quote }}
+      linkToDirectory: "false"
+      noMatchOU: "oidc"
+      lookupFilter: "(uid=${sub})"
+      defaultObjectClass: inetOrgPerson
+      uidAttr: sub
+      hd: {{ .Values.oidc.domain | quote }}
+      {{ if .Values.oidc.user_in_idtoken }}
+      userLookupClassName: "com.tremolosecurity.unison.proxy.auth.openidconnect.loadUser.LoadJWTFromAccessToken"
+      jwtTokenAttributeName: "id_token"
+      {{ else }}
+      userLookupClassName: "com.tremolosecurity.unison.proxy.auth.openidconnect.loadUser.LoadAttributesFromWS"
+      {{ end }}
+      {{ if hasKey .Values.oidc "forceauthentication" }}
+      forceAuthentication : {{ .Values.oidc.forceauthentication | quote }}
+      {{ else }}
+      forceAuthentication : "true"
+      {{ end }}
+    secretParams:
+    - name: secretid
+      secretName: orchestra-secrets-source#[openunison.static-secret.suffix]
+      secretKey: OIDC_CLIENT_SECRET
+    {{ if .Values.oidc.client_id_is_secret }}
+    - name: clientid
+      secretName: orchestra-secrets-source
+      secretKey: OIDC_CLIENT_ID
+    {{ end }}
+  - name: map
+    required: required
+    params:
+      map: 
+      - "uid|composite|{{ print "${" .Values.oidc.claims.sub "}" }}"
+      - "mail|composite|{{ print "${" .Values.oidc.claims.email "}" }}"
+      - "givenName|composite|{{ print "${"  .Values.oidc.claims.given_name "}" }}"
+      - "sn|composite|{{ print "${"  .Values.oidc.claims.family_name "}" }}"
+      - "displayName|composite|{{ print "${"  .Values.oidc.claims.display_name "}" }}"
+      - "memberOf|user|{{ .Values.oidc.claims.groups }}"
+
+  {{ end }}
   level: 10
   root: o=Data

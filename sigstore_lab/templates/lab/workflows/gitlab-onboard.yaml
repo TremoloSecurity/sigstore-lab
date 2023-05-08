@@ -1,0 +1,413 @@
+{{ if eq .Values.gittype "gitlab" }}
+---
+apiVersion: openunison.tremolo.io/v1
+kind: Workflow
+metadata:
+  name: gitlab-onboard
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: openunison
+    app.kubernetes.io/instance: openunison-orchestra
+    app.kubernetes.io/component: openunison-workflows
+    app.kubernetes.io/part-of: openunison
+spec:
+  description: JIT - Generate User Namespace in GitLab
+  inList: false
+  label: JIT - Generate User Namespace in GitLab
+  orgId: 687da09f-8ec1-48ac-b035-f2f182b9bd1e
+  dynamicConfiguration:
+    dynamic: false
+    className: ""
+    params: []
+  tasks: |-
+      # create gitlab group to store the projects
+      - taskType: customTask
+        className: com.tremolosecurity.provisioning.customTasks.AddGroupToStore
+        params:
+          target: gitlab
+          name: $github_user$-workshop
+          attributes: requestAccessEnabled=false
+
+      # Add user to gitlab group as a maintainer
+      - taskType: mapping
+        strict: true
+        map:
+          - targetAttributeName: sub
+            sourceType: user
+            targetAttributeSource: uid
+        onSuccess:
+        - taskType: customTask
+          className: com.tremolosecurity.provisioning.customTasks.ClearGroups
+          params: {}
+          
+        - taskType: addGroup
+          name: $github_user$-workshop
+          remove: false
+
+        - taskType: customTask
+          className: com.tremolosecurity.provisioning.customTasks.JavaScriptTask
+          params:
+            javaScript: |-
+                // map from openunison groups to gitlab
+                HashMap = Java.type("java.util.HashMap");
+                GitlabUserProvider = Java.type("com.tremolosecurity.unison.gitlab.provisioning.targets.GitlabUserProvider");
+                Attribute = Java.type("com.tremolosecurity.saml.Attribute");
+                Integer = Java.type("java.lang.Integer");
+
+                function init(task,params) {
+                // nothing to do
+                }
+                function reInit(task) {
+                // do nothing
+                }
+                function doTask(user,request) {
+                    groupmap = new HashMap();
+                    var foundAdmin = false;
+                    
+                    groupmap.put(request.get("github_user") + "-workshop",new Integer(40));
+                    
+                    request.put(GitlabUserProvider.GITLAB_GROUP_ENTITLEMENTS,groupmap);
+                    isAdmin = false;
+                    user.getAttribs().put("isAdmin",isAdmin);
+                    return true;
+                }
+
+        - taskType: provision
+          sync: false
+          target: gitlab
+          setPassword: false
+          onlyPassedInAttributes: true
+          attributes:
+          - sub
+
+      # Create the gitlab application project
+      - taskType: customTask
+        className: com.tremolosecurity.unison.gitlab.provisioning.tasks.CreateProject
+        params:
+            namespace: $github_user$-workshop
+            name: $github_user$-workshop-application
+            description: Application Project
+            issuesEnabled: "true"
+            mergeRequestsEnabled: "true"
+            wikiEnabled: "true"
+            snipitsEnabled: "true"
+            visibility: "2"
+            targetName: gitlab
+            gitSshHost: {{ .Values.sigstore_lab.gitlab.ssh_host | quote }}
+            createWebhook: "false"
+            webhookSuffix: ""
+            webhookBranchFilter: "main"
+
+      # Create the application's docker file
+      - taskType: customTask
+        className: com.tremolosecurity.unison.gitlab.provisioning.tasks.CreateGitFile
+        params:
+            targetName: gitlab
+            namespace: $github_user$-workshop
+            project: $github_user$-workshop-application
+            branch: main
+            path: source/Dockerfile
+            content: |-
+              FROM python:buster
+
+              RUN groupadd -r microsvc -g 433 && \
+                  mkdir /usr/local/microsvc && \
+                  useradd -u 431 -r -g microsvc -d /usr/local/microsvc -s /sbin/nologin -c "Micro Service User" microsvc
+              
+              ADD requirements.txt /usr/local/microsvc/requirements.txt
+              ADD helloworld.py /usr/local/microsvc/helloworld.py
+
+              WORKDIR /usr/local/microsvc
+
+
+              RUN pip3 install -r ./requirements.txt
+
+              USER 431
+
+              CMD ["python3","helloworld.py"]
+            commitMessage: initial create
+
+      # Create the application's sourece file
+      - taskType: customTask
+        className: com.tremolosecurity.unison.gitlab.provisioning.tasks.CreateGitFile
+        params:
+            targetName: gitlab
+            namespace: $github_user$-workshop
+            project: $github_user$-workshop-application
+            branch: main
+            path: source/helloworld.py
+            content: |-
+                from flask import Flask
+                import os
+                import socket
+                import json
+
+                app = Flask(__name__)
+
+                @app.route('/')
+                def hello():
+                    retVal = {
+                        "msg":"hello world!",
+                        "host":"%s" % socket.gethostname()
+
+                    }
+                    return json.dumps(retVal)
+
+                if __name__ == "__main__":
+                    app.run(host="0.0.0.0", port=8080, debug=True)
+            commitMessage: initial create
+
+      # Create the application's python requirements file
+      - taskType: customTask
+        className: com.tremolosecurity.unison.gitlab.provisioning.tasks.CreateGitFile
+        params:
+            targetName: gitlab
+            namespace: $github_user$-workshop
+            project: $github_user$-workshop-application
+            branch: main
+            path: source/requirements.txt
+            content: |-
+                flask
+            commitMessage: initial create
+
+      - taskType: customTask
+        className: com.tremolosecurity.unison.gitlab.provisioning.tasks.CreateGitFile
+        params:
+          targetName: gitlab
+          namespace: $github_user$-workshop
+          project: $github_user$-workshop-application
+          branch: main
+          path: .gitlab-ci.yml
+          commitMessage: Initial commit
+          content: |-
+            stages:          # List of stages for jobs, and their order of execution
+              - login
+              - build
+              - deploy
+
+            login-job:
+              stage: login
+              image: registry.gitlab.com/gitlab-org/cloud-deploy/aws-base:latest
+              script:
+                - mkdir -p scripts
+                - STS_TOKEN=(\$(aws sts assume-role-with-web-identity --role-arn "${AWS_ROLE}" --region us-east-1  --role-session-name "gitlab-${CI_PROJECT_ID}-${CI_PIPELINE_ID}" --web-identity-token ${CI_JOB_JWT_V2} --query 'Credentials.[AccessKeyId,SecretAccessKey,SessionToken]' --output text))
+                - export AWS_ACCESS_KEY_ID="${STS_TOKEN[0]}"
+                - export AWS_SECRET_ACCESS_KEY="${STS_TOKEN[1]}"
+                - export AWS_SESSION_TOKEN="${STS_TOKEN[2]}"
+                - aws sts get-caller-identity --region us-east-1
+                - echo "AWS_ACCESS_KEY_ID=\$AWS_ACCESS_KEY_ID" > scripts/creds.json
+                - echo "AWS_SECRET_ACCESS_KEY=\$AWS_SECRET_ACCESS_KEY" >> scripts/creds.json
+                - echo "AWS_SESSION_TOKEN=\$AWS_SESSION_TOKEN" >> scripts/creds.json
+              artifacts:
+                paths:
+                  - scripts/creds.json
+                  
+
+            build-job:       # This job runs in the build stage, which runs first.
+              stage: build
+              image: 
+                name: gcr.io/kaniko-project/executor:v1.9.0-debug
+                entrypoint:
+                  - ""
+              script:
+                - AWS_ACCESS_KEY_ID=\$(cat scripts/creds.json | grep AWS_ACCESS_KEY_ID | cut -d = -f2)
+                - AWS_SECRET_ACCESS_KEY=\$(cat scripts/creds.json | grep AWS_SECRET_ACCESS_KEY | cut -d = -f2)
+                - AWS_SESSION_TOKEN=\$(cat scripts/creds.json | grep AWS_SESSION_TOKEN | cut -d = -f2)
+                - mkdir -p ~/.docker
+                - echo "{\"credHelpers\":{\"public.ecr.aws\":\"ecr-login\"}}" > /kaniko/.docker/config.json
+                - mkdir ~/.aws
+                - echo "[default]" >  ~/.aws/credentials
+                - echo "aws_access_key_id=\$AWS_ACCESS_KEY_ID" >> ~/.aws/credentials
+                - echo "aws_secret_access_key=\$AWS_SECRET_ACCESS_KEY" >> ~/.aws/credentials
+                - echo "aws_session_token=\$AWS_SESSION_TOKEN" >> ~/.aws/credentials
+                - export IMAGE_URL="{{ .Values.sigstore_lab.aws.ecr_repo }}:\$CI_PROJECT_NAMESPACE-\$CI_COMMIT_SHORT_SHA"
+                - echo "Image URL- \$IMAGE_URL"
+                - /kaniko/executor
+                  --dockerfile source/Dockerfile
+                  --context source
+                  --destination \$IMAGE_URL
+
+            deploy-job:      # This job runs in the deploy stage.
+              stage: deploy  # It only runs when *both* jobs in the test stage complete successfully.
+              environment: production
+              image: {{ .Values.sigstore_lab.scratchpad_image }}
+              script: |-
+                mkdir ~/.ssh
+                cp \$patch_key  ~/.ssh/id_rsa
+                cat  ~/.ssh/id_rsa
+                chmod go-rwx ~/.ssh/id_rsa
+                ssh-keyscan {{ .Values.sigstore_lab.gitlab.ssh_host }} > ~/.ssh/known_hosts
+                cd /tmp
+                mkdir remote
+                cd remote
+                git clone git@{{ .Values.sigstore_lab.gitlab.ssh_host }}:$github_user$-workshop/$github_user$-workshop-infrastructure.git
+                cd $github_user$-workshop-infrastructure
+                git config user.name gitlab-cicd
+                git config user.email gitlab-cicd@#[OU_HOST]
+                kubectl patch --local -f yaml/deployments/run-service.yaml -p "{\"spec\":{\"template\":{\"spec\":{\"containers\":[{\"name\":\"pause\",\"image\":\"{{ .Values.sigstore_lab.aws.ecr_repo }}:${CI_PROJECT_NAMESPACE}-${CI_COMMIT_SHORT_SHA}\"}]}}}}" -o yaml > /tmp/hello-python.yaml
+                cp /tmp/hello-python.yaml yaml/deployments/run-service.yaml
+                git add yaml/deployments/run-service.yaml
+                git commit -m "commit automated build from commit ${CI_COMMIT_SHORT_SHA}"
+                git push
+
+      
+      # Create the gitlab infrastructure project
+      - taskType: customTask
+        className: com.tremolosecurity.unison.gitlab.provisioning.tasks.CreateProject
+        params:
+            namespace: $github_user$-workshop
+            name: $github_user$-workshop-infrastructure
+            description: Infrastructure Project
+            issuesEnabled: "true"
+            mergeRequestsEnabled: "true"
+            wikiEnabled: "true"
+            snipitsEnabled: "true"
+            visibility: "2"
+            targetName: gitlab
+            gitSshHost: {{ .Values.sigstore_lab.gitlab.ssh_host | quote }}
+            createWebhook: "false"
+            webhookSuffix: ""
+            webhookBranchFilter: "main"
+
+      # create a deployment key for argocd to use
+      - taskType: customTask
+        className: com.tremolosecurity.unison.gitlab.provisioning.tasks.CreateDeploymentKey
+        params:
+          targetName: gitlab
+          namespace: $github_user$-workshop
+          project: $github_user$-workshop-infrastructure
+          keyLabel: gitops-update
+          makeWriteable: "true"
+          privateKeyReuestName: gitopsPullSecretB64
+          privateKeyReuestNamePT: gitopsPullSecret
+
+      # Add the AWS role to the project
+      - taskType: customTask
+        className: com.tremolosecurity.unison.gitlab.provisioning.tasks.CreateVariable
+        params:
+          targetName: gitlab
+          namespace: $github_user$-workshop
+          project: $github_user$-workshop-application
+          key: AWS_ROLE
+          value: "{{ .Values.sigstore_lab.aws.role }}"
+          varType: ENV_VAR
+          protectedVar: "false"
+          masked: "true"
+          environment: "*"
+
+      # Add the infrastructre key to the application project
+      - taskType: customTask
+        className: com.tremolosecurity.unison.gitlab.provisioning.tasks.CreateVariable
+        params:
+          targetName: gitlab
+          namespace: $github_user$-workshop
+          project: $github_user$-workshop-application
+          key: patch_key
+          value: "$gitopsPullSecret$"
+          varType: FILE
+          protectedVar: "false"
+          masked: "false"
+          environment: "*"
+      
+      - taskType: customTask
+        className: com.tremolosecurity.unison.gitlab.provisioning.tasks.CreateGitFile
+        params:
+          targetName: gitlab
+          namespace: $github_user$-workshop
+          project: $github_user$-workshop-infrastructure
+          branch: main
+          path: yaml/deployments/scratchpad.yaml
+          commitMessage: Initial commit
+          content: |-
+              ---
+              kind: Deployment
+              apiVersion: apps/v1
+              metadata:
+                name: scrathpad
+                namespace: "$namespaceName$"
+                labels:
+                  app: scrathpad
+              spec:
+                replicas: 1
+                selector:
+                  matchLabels:
+                    app: scrathpad
+                template:
+                  metadata:
+                    creationTimestamp: null
+                    labels:
+                      app: scrathpad
+                  spec:
+                    containers:
+                      - name: scratchpad
+                        image: {{ .Values.sigstore_lab.scratchpad_image }}
+                        resources: {}
+                        terminationMessagePath: /dev/termination-log
+                        terminationMessagePolicy: File
+                        imagePullPolicy: IfNotPresent
+                    restartPolicy: Always
+                    terminationGracePeriodSeconds: 30
+                    dnsPolicy: ClusterFirst
+                    securityContext: {}
+                    schedulerName: default-scheduler
+                strategy:
+                  type: RollingUpdate
+                  rollingUpdate:
+                    maxUnavailable: 25%
+                    maxSurge: 25%
+                revisionHistoryLimit: 10
+                progressDeadlineSeconds: 600
+      
+      - taskType: customTask
+        className: com.tremolosecurity.unison.gitlab.provisioning.tasks.CreateGitFile
+        params:
+          targetName: gitlab
+          namespace: $github_user$-workshop
+          project: $github_user$-workshop-infrastructure
+          branch: main
+          path: yaml/deployments/run-service.yaml
+          commitMessage: Initial commit
+          content: |-
+            ---
+            metadata:
+              name: "run-service"
+              namespace: "$namespaceName$"
+              labels:
+                app: "run-service"
+            apiVersion: "apps/v1"
+            kind: "Deployment"
+            spec:
+              template:
+                metadata:
+                  creationTimestamp: null
+                  labels:
+                    app: "run-service"
+                spec:
+                  dnsPolicy: "ClusterFirst"
+                  terminationGracePeriodSeconds: 30
+                  containers:
+                  - image: "{{ .Values.sigstore_lab.pause_image }}"
+                    imagePullPolicy: "Always"
+                    terminationMessagePolicy: "File"
+                    terminationMessagePath: "/dev/termination-log"
+                    name: "pause"
+                    resources: {}
+                  securityContext: {}
+                  restartPolicy: "Always"
+                  schedulerName: "default-scheduler"
+              replicas: 1
+              selector:
+                matchLabels:
+                  app: "run-service"
+              revisionHistoryLimit: 10
+              strategy:
+                type: "RollingUpdate"
+                rollingUpdate:
+                  maxSurge: "25%"
+                  maxUnavailable: "25%"
+              progressDeadlineSeconds: 600
+
+        
+    
+      
+{{ end }}

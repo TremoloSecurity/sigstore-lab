@@ -210,7 +210,7 @@ spec:
 Next, patch the ArgoCD deployment to work with the ingress controller:
 
 ```
-kubectl patch deployments argo-cd-argocd-server -n argocd -p '{"spec":{"template":{"spec":{"containers":[{"name":"server","command":["argocd-server","--staticassets","/shared/app","--repo-server","argo-cd-argocd-repo-server:8081","--logformat","text","--loglevel","info","--redis","argo-cd-argocd-redis:6379","--insecure"]}]}}}}'
+kubectl patch deployments argocd-server -n argocd -p '{"spec":{"template":{"spec":{"containers":[{"name":"server","command":["argocd-server","--staticassets","/shared/app","--repo-server","argocd-repo-server:8081","--logformat","text","--loglevel","info","--redis","argocd-redis:6379","--insecure"]}]}}}}'
 ```
 
 Finally, patch the ArgoCD configuration to allow the *admin* user to use an API key:

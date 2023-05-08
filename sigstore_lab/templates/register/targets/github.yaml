@@ -1,3 +1,4 @@
+{{ if eq .Values.gittype "github" }}
 apiVersion: openunison.tremolo.io/v1
 kind: Target
 metadata:
@@ -18,3 +19,4 @@ spec:
   - name: sub
     source: sub
     sourceType: user
+{{ end }}

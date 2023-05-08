@@ -1,0 +1,40 @@
+{{ if eq .Values.gittype "gitlab" }}
+apiVersion: openunison.tremolo.io/v1
+kind: Target
+metadata:
+  name: gitlab
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: openunison
+    app.kubernetes.io/instance: openunison-{{ .Release.Name }}
+    app.kubernetes.io/component: openunison-targets
+    app.kubernetes.io/part-of: openunison
+spec:
+  className: com.tremolosecurity.unison.gitlab.provisioning.targets.GitlabUserProvider
+  params:
+  - name: url
+    value: "{{ .Values.sigstore_lab.gitlab.url }}"
+  secretParams:
+  - name: token
+    secretName: gitlabapp
+    secretKey: token
+  targetAttributes:
+  - name: username
+    source: username
+    sourceType: user
+  - name: name
+    source: name
+    sourceType: user
+  - name: email
+    source: email
+    sourceType: user
+  - name: isAdmin
+    source: "false"
+    sourceType: static
+  - name: skipConfirmation
+    source: "true"
+    sourceType: static
+  - name: projectsLimit
+    source: "100000"
+    sourceType: static
+{{ end }}
