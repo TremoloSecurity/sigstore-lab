@@ -293,3 +293,70 @@ With the values file created, the next step is to deploy OpenUnison using the *o
 ouctl install-auth-portal --additional-helm-charts=sigstore-lab=/path/to/sigstore-lab/sigstore_lab -s /path/to/github -b /path/to/db -t /tmp/path/to/smtp ~/git/sigstore-lab/yaml/openunison-values.yaml
 ```
 
+# First Login
+
+The first person to login will be the main administrator.  Navigate to https://HOST/ where HOST is what you specified for `network.openunison_host` in your values.yaml.  You'll need to login with your GitHub ID.
+
+# Onboarding New Users
+
+Lab participants will need to first register by going to https://HOST/github-register/ where HOST is what you specified for `network.openunison_host` in your values.yaml.  The user will need to fill out the form and submit the request.  The administrator will get a request for a new lab user and need to approve them at https://HOST/.  If you are already logged in as an administrator, refresh the page to see the new requests.  Once approved, participents will receive an email from github asking them to accept the invitation to the organization.
+
+# Lab
+
+## AWS Login
+
+Uncomment lines 30-34 and 37-41 of .github/workflows/build_and_deploy.yaml in your application repo.  It should go from 
+
+```yaml
+      # Login to AWS
+      #- uses: aws-actions/configure-aws-credentials@v1
+      #  with:
+      #    role-to-assume: ${{ secrets.AWS_ROLE }}
+      #    role-session-name: ${{ secrets.SESSION_NAME }}
+      #    aws-region: us-east-1
+
+      # Get docker credentials
+      #- name: Login to Amazon ECR Private
+      #  id: login-ecr
+      #  uses: aws-actions/amazon-ecr-login@v1
+      #  with: 
+      #    registry-type: public
+ ```
+  
+ to 
+ 
+ ```yaml
+       # Login to AWS
+      - uses: aws-actions/configure-aws-credentials@v1
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE }}
+          role-session-name: ${{ secrets.SESSION_NAME }}
+          aws-region: us-east-1
+
+      # Get docker credentials
+      - name: Login to Amazon ECR Private
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v1
+        with: 
+          registry-type: public
+ ```
+ 
+ When the action runs, it will push the container to AWS.  It will fail to deploy because the container is not signed.  Next, uncomment 48-50 in .github/workflows/build_and_deploy.yaml in your application repo.  It should go from:
+ 
+```yaml
+      # Sign our image using the GitHub OIDC Token
+      #- name: Sign image with GitHub OIDC
+      #  run: |-
+      #     COSIGN_EXPERIMENTAL=1 cosign sign public.ecr.aws/o6u7e2l7/civonavigate2023:${GITHUB_REPOSITORY#*/}-$GITHUB_SHA
+```
+
+to
+
+```yaml
+      # Sign our image using the GitHub OIDC Token
+      - name: Sign image with GitHub OIDC
+        run: |-
+           COSIGN_EXPERIMENTAL=1 cosign sign public.ecr.aws/o6u7e2l7/civonavigate2023:${GITHUB_REPOSITORY#*/}-$GITHUB_SHA
+```
+
+Now Kubernetes will accept the image
