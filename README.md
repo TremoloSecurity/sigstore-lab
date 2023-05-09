@@ -6,7 +6,7 @@ This repo contains the helm chart and the instructions for building a secure sup
 2. An NGINX Ingress controller with a `LoadBalancer` setup
 3. An AWS Account (for storing images in ECR)
 4. **Recommended** - TLS wildcard certificate
-5. A GitHub Organziation to host participant repositories
+5. A GitHub Organziation to host participant repositories or a GitLab server
 6. The SigStore Policy Controller
 
 # Amazon Web Services
@@ -259,6 +259,8 @@ Next, deploy the kubernetes dashboard:
 kubectl apply -f https://raw.githubusercontent.com/kubernetes/dashboard/v2.7.0/aio/deploy/recommended.yaml
 ```
 
+## GitHub Integration
+
 Once your organization is created, setup an [OAuth application](https://openunison.github.io/deployauth/#github) per the instructions on the OpenUnison documentation site.  For your **Authorization callback URL**, specifcy `https://ou.civosigstore.tremolo.dev/auth/github`, replacing `ou.civosigstore.tremolo.dev` with your own host name. Generate a new client secret and place it in a file you'll use to deploy OpenUnison.
 
 Once your OAuth App is created, create a team in the organization called `lap-participants`.  This will be used to enable access to your organization.
@@ -288,6 +290,28 @@ We're now able to deploy OpenUnison.  Update the [openunison values file](yaml/o
 | 144 | A base64 encoded PNG file for the github orgnaization that is 210 pixels wide and 240 pixels high |
 
 With the values file created, the next step is to deploy OpenUnison using the *ouctl* tool.  Include the the sigstore_lab chart included in this repository:
+
+## GitLab Integration
+
+Create a personal access token for the root user and store it in the `Secret` `gitlabapp` with the key `token` in the `openunison` namespace.
+
+We're now able to deploy OpenUnison.  Update the [openunison values file](yaml/openunison-values-gitlab.yaml):
+
+| Line | Change |
+| ---- | ------ |
+| 2 - 4 | Update the hosts for your domain |
+| 56 | Get the client id from the OAuth application your created in GitLab |
+| 57 | The issuer for GitLab SSO.  Usually just the URL of your GitLab server without the trailing `/` |
+| 125 - 131 | Update for your database configuration.  See the [OpenUnison Namespace as a Service](https://openunison.github.io/namespace_as_a_service/#databases) docs for details. |
+| 133 - 138 | Update for your SMTP settings if using an external SMTP service |
+| 142 | The URL for your GitLab server without the trailing `/` |
+| 143 | The SSH host for your GitLab server |
+| 145 | The DNS domain for your SigStore lab |
+| 146 | The image URL of the scratchpad container that was created and signed above |
+| 147 | The image URL of the pause container that was signed above |
+| 149 | The AWS identity provider role created above to store the sigstore policy |
+| 150 | The name of the repository that will store all images participant images as tags |
+| 151 | A base64 encoded PNG file for the github orgnaization that is 210 pixels wide and 240 pixels high |
 
 ```bash
 ouctl install-auth-portal --additional-helm-charts=sigstore-lab=/path/to/sigstore-lab/sigstore_lab -s /path/to/github -b /path/to/db -t /tmp/path/to/smtp ~/git/sigstore-lab/yaml/openunison-values.yaml
