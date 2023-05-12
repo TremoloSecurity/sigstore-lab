@@ -190,10 +190,17 @@ spec:
               image: registry.gitlab.com/gitlab-org/cloud-deploy/aws-base:latest
               script:
                 - mkdir -p scripts
+                {{ if and .Values.sigstore_lab.aws.sts .Values.sigstore_lab.aws.sts.enabled }}
+                - "export STS_TOKEN=\$(curl  -v --insecure -H \"Authorization: Bearer \${CI_JOB_JWT_V2}\" https://#[OU_HOST]/aws/token/user)"
+                - export AWS_ACCESS_KEY_ID="\$(echo \$STS_TOKEN | jq -r '.token["AWS Key"]')"
+                - export AWS_SECRET_ACCESS_KEY="\$(echo \$STS_TOKEN | jq -r '.token["AWS Secret"]')"
+                - export AWS_SESSION_TOKEN="\$(echo \$STS_TOKEN | jq -r '.token["AWS Session"]')"
+                {{ else }}
                 - STS_TOKEN=(\$(aws sts assume-role-with-web-identity --role-arn "${AWS_ROLE}" --region us-east-1  --role-session-name "gitlab-${CI_PROJECT_ID}-${CI_PIPELINE_ID}" --web-identity-token ${CI_JOB_JWT_V2} --query 'Credentials.[AccessKeyId,SecretAccessKey,SessionToken]' --output text))
                 - export AWS_ACCESS_KEY_ID="${STS_TOKEN[0]}"
                 - export AWS_SECRET_ACCESS_KEY="${STS_TOKEN[1]}"
                 - export AWS_SESSION_TOKEN="${STS_TOKEN[2]}"
+                {{ end }}
                 - aws sts get-caller-identity --region us-east-1
                 - echo "AWS_ACCESS_KEY_ID=\$AWS_ACCESS_KEY_ID" > scripts/creds.json
                 - echo "AWS_SECRET_ACCESS_KEY=\$AWS_SECRET_ACCESS_KEY" >> scripts/creds.json
@@ -231,6 +238,12 @@ spec:
               stage: deploy  # It only runs when *both* jobs in the test stage complete successfully.
               environment: production
               image: {{ .Values.sigstore_lab.scratchpad_image }}
+              variables:
+                COSIGN_YES: "true"
+                REKOR_URL: "{{ .Values.sigstore_lab.rekor_url }}"
+                FULCIO_URL: "{{ .Values.sigstore_lab.fulcio_url }}"
+                OIDC_ISSUER_URL: "{{ .Values.sigstore_lab.sigstore_issuer_url }}"
+
               script: |-
                 mkdir ~/.ssh
                 cp \$patch_key  ~/.ssh/id_rsa

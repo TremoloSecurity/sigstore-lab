@@ -1,0 +1,37 @@
+{{ if and .Values.sigstore_lab.aws.sts .Values.sigstore_lab.aws.sts.enabled }}
+---
+apiVersion: openunison.tremolo.io/v1
+kind: AuthenticationChain
+metadata:
+  name: aws-sts
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "30"
+spec:
+  level: 20
+  root: o=Tremolo
+  authMechs:
+  - name: oauth2jwt
+    required: required
+    params:
+      {{ if eq .Values.gittype "gitlab" }}
+      issuer: "{{ .Values.sigstore_lab.gitlab.url }}"
+      {{ else }}
+      issuer: "https://token.actions.githubusercontent.com"
+      {{ end }}
+      linkToDirectory: "false"
+      noMatchOU: oauth2-sts
+      uidAttr: sub
+      lookupFilter: "(sub=${sub})"
+      userLookupClassName: inetOrgPerson
+      defaultObjectClass: inetOrgPerson
+      realm: aws-sts
+      scope: auth
+      {{ if eq .Values.gittype "gitlab" }}
+      audience: "{{ .Values.sigstore_lab.gitlab.url }}"
+      {{ else }}
+      audience: "sigstore-lab-aws"
+      {{ end }}
+      fromWellKnown: "true"
+    secretParams: []
+{{ end }}

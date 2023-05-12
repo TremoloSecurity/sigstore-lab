@@ -1,0 +1,52 @@
+{{ if and .Values.sigstore_lab.aws.sts .Values.sigstore_lab.aws.sts.enabled }}
+apiVersion: openunison.tremolo.io/v2
+kind: Application
+metadata:
+  labels:
+    app.kubernetes.io/component: openunison-applications
+    app.kubernetes.io/instance: openunison-orchestra-login-portal
+    app.kubernetes.io/name: openunison
+    app.kubernetes.io/part-of: openunison
+  name: aws-token
+  namespace: openunison
+spec:
+  azTimeoutMillis: 3000
+  cookieConfig:
+    cookiesEnabled: false
+    domain: '#[OU_HOST]'
+    httpOnly: true
+    keyAlias: session-unison
+    logoutURI: /logout
+    scope: -1
+    secure: true
+    sessionCookieName: tremolosession
+    timeout: 900
+  isApp: true
+  urls:
+  - authChain: aws-sts
+    azRules:
+    - constraint: ou=oauth2-sts,o=Tremolo
+      scope: dn
+    filterChain:
+    - className: com.tremolosecurity.scalejs.token.ws.ScaleToken
+      params:
+        displayNameAttribute: sub
+        frontPage.text: AWS Environment Token
+        frontPage.title: AWS Environment Token
+        homeURL: /scale/
+        logoutURL: /logout
+        tokenClassName: "com.tremolosecurity.proxy.token.AwsTokens"
+        uidAttribute: "sub"
+        sigKeyName: unison-saml2-rp-sig
+        issuer: https://#[OU_HOST]/auth/idp/aws
+        recipient: https://signin.aws.amazon.com/saml
+        audience: "urn:amazon:webservices"
+        minAlive: "15"
+        idpName: "{{ .Values.sigstore_lab.aws.sts.idp }}"
+        roleName: "{{ .Values.sigstore_lab.aws.role }}"
+        warnMinutesLeft: "5"
+    hosts:
+    - '#[OU_HOST]'
+    results: {}
+    uri: /aws/token
+{{ end }}

@@ -11,7 +11,9 @@ This repo contains the helm chart and the instructions for building a secure sup
 
 # Amazon Web Services
 
-In an AWS account, create a public Elastic Container Registry (ECR) for storing generated containers.
+In an AWS account, create a public Elastic Container Registry (ECR) for storing generated containers.  The next step will depend on if you're using GitHub or GitLab.
+
+## GitHub
 
 Next, [create an IAM identity provider for GitHub](https://docs.github.com/en/actions/deployment/security-hardening-your-deployments/configuring-openid-connect-in-amazon-web-services).
 
@@ -84,6 +86,66 @@ Next, create an IAM policy called `sigstorelab` with the the following JSON.   M
 ```
 
 Next, create a *Role* for the OIDC identity provider you previously created.  Attach the `sigstore` *Policy* to the *Role*.
+
+## GitLab
+
+First, create an IAM policy called `sigstorelab` with the the following JSON.   Make the following replacements:
+
+| Item | Value |
+| ---- | ----- |
+| `ACCOUNT` | AWS Account number |
+| `REGISTRY_NAME` | The name of your ECR registry |
+
+
+
+
+```json
+{
+	"Version": "2012-10-17",
+	"Statement": [
+		{
+			"Sid": "VisualEditor0",
+			"Effect": "Allow",
+			"Action": [
+				"ecr-public:DescribeImageTags",
+				"ecr-public:DescribeImages",
+				"ecr-public:PutRepositoryCatalogData",
+				"ecr-public:UploadLayerPart",
+				"ecr-public:DeleteRepositoryPolicy",
+				"ecr-public:UntagResource",
+				"ecr-public:CreateRepository",
+				"ecr-public:DescribeRegistries",
+				"ecr-public:GetRepositoryCatalogData",
+				"ecr-public:BatchDeleteImage",
+				"ecr-public:TagResource",
+				"ecr-public:CompleteLayerUpload",
+				"ecr-public:GetRepositoryPolicy",
+				"ecr-public:DeleteRepository",
+				"ecr-public:InitiateLayerUpload",
+				"ecr-public:DescribeRepositories",
+				"ecr-public:PutImage",
+				"ecr-public:GetRegistryCatalogData",
+				"ecr-public:ListTagsForResource",
+				"ecr-public:PutRegistryCatalogData",
+				"ecr-public:BatchCheckLayerAvailability",
+				"ecr-public:InitiateLayerUpload"
+			],
+			"Resource": "arn:aws:ecr-public::ACCOUNT:repository/REGISTRY_NAME"
+		},
+		{
+			"Sid": "VisualEditor1",
+			"Effect": "Allow",
+			"Action": [
+				"ecr-public:GetAuthorizationToken",
+				"sts:GetServiceBearerToken"
+			],
+			"Resource": "*"
+		}
+	]
+}
+```
+
+The rest of the GitLab configuration will happen after you have deployed OpenUnison.
 
 # Scratchpad Container
 
@@ -291,11 +353,17 @@ We're now able to deploy OpenUnison.  Update the [openunison values file](yaml/o
 
 With the values file created, the next step is to deploy OpenUnison using the *ouctl* tool.  Include the the sigstore_lab chart included in this repository:
 
+```bash
+ouctl install-auth-portal --additional-helm-charts=sigstore-lab=/path/to/sigstore-lab/sigstore_lab -s /path/to/github -b /path/to/db -t /tmp/path/to/smtp ~/git/sigstore-lab/yaml/openunison-values.yaml
+```
+
 ## GitLab Integration
 
 Create a personal access token for the root user and store it in the `Secret` `gitlabapp` with the key `token` in the `openunison` namespace.
 
 We're now able to deploy OpenUnison.  Update the [openunison values file](yaml/openunison-values-gitlab.yaml):
+
+***NOTE: You will not be able to set the WAS identity provider role yet, leave it with an empty string for now***
 
 | Line | Change |
 | ---- | ------ |
@@ -311,11 +379,82 @@ We're now able to deploy OpenUnison.  Update the [openunison values file](yaml/o
 | 147 | The image URL of the pause container that was signed above |
 | 149 | The AWS identity provider role created above to store the sigstore policy |
 | 150 | The name of the repository that will store all images participant images as tags |
-| 151 | A base64 encoded PNG file for the github orgnaization that is 210 pixels wide and 240 pixels high |
+| 153 | The AWS identity provider ARN, you'll need to set this after the initial deployment |
+| 155 | The URL for Fulcio |
+| 156 | The URL for Rekor |
+| 157 | The URL for your SigStore Issuer |
+| 159 | A base64 encoded PNG file for the github orgnaization that is 210 pixels wide and 240 pixels high |
+
+With the values file created, the next step is to deploy OpenUnison using the *ouctl* tool.  Include the the sigstore_lab chart included in this repository:
 
 ```bash
-ouctl install-auth-portal --additional-helm-charts=sigstore-lab=/path/to/sigstore-lab/sigstore_lab -s /path/to/github -b /path/to/db -t /tmp/path/to/smtp ~/git/sigstore-lab/yaml/openunison-values.yaml
+ouctl install-auth-portal --additional-helm-charts=sigstore-lab=/path/to/sigstore-lab/sigstore_lab -s /path/to/github -b /path/to/db -t /tmp/path/to/smtp ~/git/sigstore-lab/yaml/openunison-values-gitlab.yaml
 ```
+
+Once OpenUnison is running, the next step is to setup the AWS identity provider.  First, get your OpenUnison's SAML2 metadata for the AWS STS:
+
+```
+curl https://OU_HOST/auth/forms/saml2_idp_metadata.jsp\?idp\=aws > /tmp/aws-saml2.xml
+```
+
+Where `OU_HOST` is the host name for your OpenUnison instance (`network.openunison_host` in your values.yaml)
+
+Next, create an identity provider using this metadata:
+
+```
+aws iam create-saml-provider --name openunison-sigstore-lab --saml-metadata-document "$(< /tmp/aws-saml2.xml)"
+```
+
+This will create the identity provider.  The output will be look like:
+
+```json
+{
+    "SAMLProviderArn": "arn:aws:iam::XXXXXXXXX:saml-provider/openunison-sigstore-lab"
+}
+```
+
+Use the `SAMLProviderArn` value for `sistore_lab.aws.sts.idp` in your values.yaml and redeploy the lab's helm chart (no OpenUnison redeployments needed):
+
+```
+helm upgrade sigstore-lab /path/to/sigstore-lab/sigstore_lab -n openunison -f /path/to/openunison-values-gitlab.yaml
+```
+
+The last step is to crete an IAM role and attach our policy to it.  First use the `SAMLProviderArn` from above to update the below JSON and store it to /tmp/trust.json:
+
+```
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Effect": "Allow",
+            "Principal": {
+                "Federated": "arn:aws:iam::XXXXXXXXXXXXXXX:saml-provider/openunison-sigstore-lab"
+            },
+            "Action": "sts:AssumeRoleWithSAML",
+            "Condition": {
+                "StringEquals": {
+                    "SAML:iss": "https://OU_HOST/auth/idp/aws"
+                }
+            }
+        }
+    ]
+}
+```
+Where `OU_HOST` is the host name for your OpenUnison instance (`network.openunison_host` in your values.yaml).
+
+Next, create your role:
+
+```
+aws iam create-role --role-name openunison-sigstore-lab --assume-role-policy-document "$(< /tmp/trust.json )"
+```
+
+This command tells AWS to create the role allowing it to trust our SAML2 identity provider.  Finally, attach our policy allowing workflows to push containers to AWS:
+
+```
+aws iam attach-role-policy --role-name openunison-sigstore-lab  --policy-arn 'arn:aws:iam::XXXXXXXX:policy/sigstore-lab'
+```
+
+OpenUnison is deployed and you can proceed to your first login.
 
 # First Login
 

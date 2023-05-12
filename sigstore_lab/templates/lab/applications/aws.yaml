@@ -1,0 +1,48 @@
+{{ if and .Values.sigstore_lab.aws.sts .Values.sigstore_lab.aws.sts.enabled }}
+---
+apiVersion: openunison.tremolo.io/v2
+kind: Application
+metadata:
+  labels:
+    app.kubernetes.io/component: openunison-applications
+    app.kubernetes.io/instance: openunison-orchestra-login-portal
+    app.kubernetes.io/name: openunison
+    app.kubernetes.io/part-of: openunison
+  name: aws
+  namespace: openunison
+spec:
+  azTimeoutMillis: 3000
+  cookieConfig:
+    cookiesEnabled: true
+    domain: '#[OU_HOST]'
+    httpOnly: true
+    keyAlias: session-unison
+    logoutURI: /logout
+    scope: -1
+    secure: true
+    sessionCookieName: tremolosession
+    timeout: 900
+  isApp: false
+  urls:
+  - azRules:
+    - constraint: o=Tremolo
+      scope: dn
+    filterChain: []
+    hosts:
+    - '#[OU_HOST]'
+    idp:
+      className: com.tremolosecurity.idp.providers.Saml2Idp
+      mappings:
+        map:
+        - sourceType: user
+          targetAttributeName: sub
+          targetAttributeSource: sub
+        strict: true
+      params:
+        sigKey: unison-saml2-rp-sig
+      trusts: []
+    results:
+      auFail: default-login-failure
+      azFail: default-login-failure
+    uri: /auth/idp/aws
+{{ end }}
