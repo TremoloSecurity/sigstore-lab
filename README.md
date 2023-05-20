@@ -207,7 +207,9 @@ spec:
   authorities:
   - name: keyless
     keyless:
-      url: "https://fulcio.sigstore.dev"
+      identities:
+      - issuerRegExp: ".*"
+        subjectRegExp: ".*"
 ```
 
 # ArgoCD
