@@ -155,7 +155,7 @@ You'll need to build the scratchpad container that is used by participants.  It'
 cd scratchpad
 docker buildx build --platform linux/amd64  --tag public.ecr.aws/REPO/scratchpad:signed --no-cache .
 docker push public.ecr.aws/REPO/scratchpad:signed
-COSIGN_EXPERIMENTAL=1 cosign sign public.ecr.aws/REPO/scratchpad:signed
+cosign sign public.ecr.aws/REPO/scratchpad:signed
 ```
 
 # Pause Container
