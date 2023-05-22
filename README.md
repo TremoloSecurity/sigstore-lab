@@ -166,7 +166,7 @@ The lab's manifests use the pause container as a placeholder, but it's not signe
 docker pull registry.k8s.io/pause
 docker tag registry.k8s.io/pause public.ecr.aws/REPO/pause:signed
 docker push public.ecr.aws/REPO/pause:signed
-COSIGN_EXPERIMENTAL=1 cosign sign public.ecr.aws/REPO/pause:signed
+cosign sign public.ecr.aws/REPO/pause:signed
 ```
 
 # Kubernetes Cluster
